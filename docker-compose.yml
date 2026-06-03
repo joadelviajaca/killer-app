@@ -1,0 +1,58 @@
+version: '3.8'
+
+services:
+  database:
+    image: mysql:8.0
+    container_name: killer_db_dev
+    environment:
+      MYSQL_ROOT_PASSWORD: root_password
+      MYSQL_DATABASE: killer_game
+      MYSQL_USER: killer_user
+      MYSQL_PASSWORD: killer_password
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+    networks:
+      - killer-network
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.dev
+    container_name: killer_backend_dev
+    volumes:
+      - ./backend:/app
+      - /app/node_modules
+    ports:
+      - "5000:5000"
+    environment:
+      - DB_HOST=database
+      - DB_USER=killer_user
+      - DB_PASSWORD=killer_password
+      - DB_NAME=killer_game
+      - PORT=5000
+    depends_on:
+      - database
+    networks:
+      - killer-network
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.dev
+    container_name: killer_frontend_dev
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    ports:
+      - "3000:3000"
+    networks:
+      - killer-network
+
+volumes:
+  mysql_data:
+
+networks:
+  killer-network:
+    driver: bridge

@@ -1,0 +1,16 @@
+FROM node:20-alpine
+
+WORKDIR /app
+
+# Copiamos los archivos de dependencias primero para aprovechar la caché de Docker
+COPY package*.json ./
+
+RUN npm install
+
+# El resto del código se monta por volumen en el docker-compose, 
+# pero dejamos el COPY por si acaso
+COPY . .
+
+EXPOSE 5000
+
+CMD ["npm", "run", "dev"]
