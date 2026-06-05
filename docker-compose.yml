@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   database:
     image: mysql:8.0
@@ -21,6 +19,7 @@ services:
       context: ./backend
       dockerfile: Dockerfile.dev
     container_name: killer_backend_dev
+    command: npm run start:dev
     volumes:
       - ./backend:/app
       - /app/node_modules
