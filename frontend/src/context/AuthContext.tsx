@@ -1,66 +1,75 @@
-import { createContext, useContext, useState, useEffect, ReactNode } from 'react';
-// import api from '../services/api';
+import { createContext, useState, useContext, ReactNode, useEffect } from 'react';
 
-// Definimos los tipos para TypeScript
 interface User {
   id: number;
   name: string;
+  email: string;
+  avatar: string; 
   isAdmin: boolean;
 }
 
 interface AuthContextType {
   user: User | null;
-  token: string | null;
-  login: (token: string, user: User) => void;
-  logout: () => void;
   isAuthenticated: boolean;
+  login: (token: string, userData: User) => void;
+  logout: () => void;
+  loading: boolean;
 }
 
-const AuthContext = createContext<AuthContextType | undefined>(undefined);
+const AuthContext = createContext<AuthContextType>(null as any);
 
 export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const [user, setUser] = useState<User | null>(null);
-  const [token, setToken] = useState<string | null>(null);
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [loading, setLoading] = useState(true); // <-- FUNDAMENTAL: Empezamos asumiendo que estamos cargando
 
-  // Al cargar la app, comprobamos si ya había una sesión guardada
   useEffect(() => {
-    const storedToken = localStorage.getItem('killer_token');
+    // Al arrancar la app, miramos si hay sesión guardada
+    const token = localStorage.getItem('killer_token');
     const storedUser = localStorage.getItem('killer_user');
 
-    if (storedToken && storedUser) {
-      setToken(storedToken);
-      setUser(JSON.parse(storedUser));
+    if (token && storedUser) {
+      try {
+        setUser(JSON.parse(storedUser));
+        setIsAuthenticated(true);
+      } catch (error) {
+        console.error('Error al recuperar la sesión');
+        localStorage.removeItem('killer_token');
+        localStorage.removeItem('killer_user');
+      }
     }
+    // Una vez comprobado, quitamos el modo carga para que las rutas hagan su trabajo
+    setLoading(false); 
   }, []);
 
-  const login = (newToken: string, newUser: User) => {
-    localStorage.setItem('killer_token', newToken);
-    localStorage.setItem('killer_user', JSON.stringify(newUser));
-    setToken(newToken);
-    setUser(newUser);
+  const login = (token: string, userData: User) => {
+    localStorage.setItem('killer_token', token);
+    localStorage.setItem('killer_user', JSON.stringify(userData));
+    setUser(userData);
+    setIsAuthenticated(true);
   };
 
   const logout = () => {
     localStorage.removeItem('killer_token');
     localStorage.removeItem('killer_user');
-    setToken(null);
     setUser(null);
-    // Redirigir al login o recargar
-    window.location.href = '/login'; 
+    setIsAuthenticated(false);
   };
 
+  // Si estamos cargando, mostramos un spinner y NO renderizamos las rutas todavía
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-gray-900 flex items-center justify-center">
+        <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-red-500"></div>
+      </div>
+    );
+  }
+
   return (
-    <AuthContext.Provider value={{ user, token, login, logout, isAuthenticated: !!token }}>
+    <AuthContext.Provider value={{ user, isAuthenticated, login, logout, loading }}>
       {children}
     </AuthContext.Provider>
   );
 };
 
-// Hook personalizado para usar el contexto fácilmente
-export const useAuth = () => {
-  const context = useContext(AuthContext);
-  if (context === undefined) {
-    throw new Error('useAuth debe usarse dentro de un AuthProvider');
-  }
-  return context;
-};
+export const useAuth = () => useContext(AuthContext);

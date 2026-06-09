@@ -7,7 +7,7 @@ const SECRET = process.env.JWT_SECRET || 'clave_fallback_insegura';
 
 export const register = async (req: Request, res: Response): Promise<void> => {
   try {
-    const { name, email, password } = req.body;
+    const { name, email, password, avatar } = req.body;
 
     // 1. Verificar si el usuario ya existe
     const existingUser = await db('users').where({ email }).first();
@@ -25,6 +25,8 @@ export const register = async (req: Request, res: Response): Promise<void> => {
       name,
       email,
       password: hashedPassword,
+      avatar,
+      is_admin: false // Por defecto, el nuevo usuario no es admin
     });
 
     res.status(201).json({ message: 'Usuario registrado con éxito', userId: id });

@@ -3,30 +3,20 @@ import { useNavigate, Link } from 'react-router-dom';
 import api from '../services/api';
 
 export default function Register() {
-  const [name, setName] = useState('');
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-  const [error, setError] = useState('');
-  const [success, setSuccess] = useState(false);
-  
   const navigate = useNavigate();
+  const [formData, setFormData] = useState({
+    name: '',
+    email: '',
+    password: '',
+    avatar: '' // Añadido el estado para el avatar
+  });
+  const [error, setError] = useState('');
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    setError('');
-    
     try {
-      // Llamada al endpoint de registro que creamos en el backend
-      await api.post('/auth/register', { name, email, password });
-      
-      setSuccess(true);
-      
-      // Esperamos 2 segundos para que el usuario lea el mensaje de éxito 
-      // y lo mandamos al login para que inicie sesión
-      setTimeout(() => {
-        navigate('/login');
-      }, 2000);
-      
+      await api.post('/auth/register', formData);
+      navigate('/login', { state: { message: 'Registro completado. Ya puedes iniciar sesión.' } });
     } catch (err: any) {
       setError(err.response?.data?.error || 'Error al registrar el usuario');
     }
@@ -34,92 +24,71 @@ export default function Register() {
 
   return (
     <div className="min-h-screen flex items-center justify-center p-4">
-      <div className="max-w-md w-full bg-gray-800 rounded-xl shadow-2xl overflow-hidden p-8 border border-gray-700">
-        
+      <div className="bg-gray-800 p-8 rounded-xl shadow-2xl w-full max-w-md border border-gray-700">
         <div className="text-center mb-8">
-          <h1 className="text-4xl font-extrabold tracking-tight text-white mb-2">
-            The Killer <span className="text-red-500">2.0</span>
-          </h1>
-          <p className="text-gray-400">Crea tu perfil de jugador</p>
+          <h1 className="text-4xl font-black text-red-600 mb-2">THE KILLER</h1>
+          <h2 className="text-xl text-gray-300">Registro de Agente</h2>
         </div>
+        
+        {error && <div className="bg-red-900/50 text-red-200 p-3 rounded mb-4 text-sm text-center border border-red-500">{error}</div>}
 
-        {error && (
-          <div className="bg-red-900/50 border border-red-500 text-red-200 px-4 py-3 rounded-lg mb-6 text-sm text-center">
-            {error}
-          </div>
-        )}
-
-        {success && (
-          <div className="bg-green-900/50 border border-green-500 text-green-200 px-4 py-3 rounded-lg mb-6 text-sm text-center">
-            Perfil creado con éxito. Redirigiendo al acceso...
-          </div>
-        )}
-
-        <form onSubmit={handleSubmit} className="space-y-5">
+        <form onSubmit={handleSubmit} className="space-y-4">
           <div>
-            <label className="block text-sm font-medium text-gray-300 mb-1" htmlFor="name">
-              Nombre y Apellidos (Reales)
-            </label>
+            <label className="block text-gray-400 text-sm mb-1">Nombre Real</label>
             <input
-              id="name"
               type="text"
               required
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              className="w-full px-4 py-3 bg-gray-900 border border-gray-700 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-red-500 focus:border-transparent transition-all"
-              placeholder="Ej: Juan Pérez"
-              disabled={success}
+              className="w-full bg-gray-900 text-white border border-gray-700 rounded px-4 py-2 focus:outline-none focus:border-red-500"
+              value={formData.name}
+              onChange={(e) => setFormData({...formData, name: e.target.value})}
             />
-            <p className="text-xs text-gray-500 mt-1">Necesario para que tu asesino sepa a quién buscar.</p>
+          </div>
+
+          {/* NUEVO CAMPO: ALIAS */}
+          <div>
+            <label className="block text-gray-400 text-sm mb-1">Alias (Nombre en Clave)</label>
+            <input
+              type="text"
+              required
+              className="w-full bg-gray-900 text-white border border-gray-700 rounded px-4 py-2 focus:outline-none focus:border-red-500"
+              value={formData.alias}
+              onChange={(e) => setFormData({...formData, alias: e.target.value})}
+            />
+            <p className="text-xs text-gray-500 mt-1 italic">
+              Este será tu nombre en el ranking público de asesinatos. ¡Elige algo no muy obvio para mantener tu identidad en secreto!
+            </p>
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-gray-300 mb-1" htmlFor="email">
-              Correo Institucional
-            </label>
+            <label className="block text-gray-400 text-sm mb-1">Correo Electrónico</label>
             <input
-              id="email"
               type="email"
               required
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              className="w-full px-4 py-3 bg-gray-900 border border-gray-700 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-red-500 focus:border-transparent transition-all"
-              placeholder="tu@email.com"
-              disabled={success}
+              className="w-full bg-gray-900 text-white border border-gray-700 rounded px-4 py-2 focus:outline-none focus:border-red-500"
+              value={formData.email}
+              onChange={(e) => setFormData({...formData, email: e.target.value})}
             />
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-gray-300 mb-1" htmlFor="password">
-              Contraseña
-            </label>
+            <label className="block text-gray-400 text-sm mb-1">Contraseña</label>
             <input
-              id="password"
               type="password"
               required
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              className="w-full px-4 py-3 bg-gray-900 border border-gray-700 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-red-500 focus:border-transparent transition-all"
-              placeholder="••••••••"
-              disabled={success}
+              className="w-full bg-gray-900 text-white border border-gray-700 rounded px-4 py-2 focus:outline-none focus:border-red-500"
+              value={formData.password}
+              onChange={(e) => setFormData({...formData, password: e.target.value})}
             />
           </div>
 
-          <button
-            type="submit"
-            disabled={success}
-            className="w-full bg-red-600 hover:bg-red-700 disabled:bg-gray-600 text-white font-bold py-3 px-4 rounded-lg transition-colors shadow-lg shadow-red-600/30 mt-4"
-          >
-            Inscribirse
+          <button type="submit" className="w-full bg-red-600 hover:bg-red-700 text-white font-bold py-3 px-4 rounded transition-colors mt-6">
+            Solicitar Ingreso
           </button>
         </form>
 
-        <div className="mt-6 text-center">
-          <Link to="/login" className="text-sm text-gray-400 hover:text-white transition-colors">
-            ¿Ya tienes un contrato? <span className="text-red-500 underline">Entra aquí</span>
-          </Link>
+        <div className="mt-6 text-center text-sm text-gray-400">
+          ¿Ya tienes autorización? <Link to="/login" className="text-red-400 hover:text-red-300">Inicia sesión aquí</Link>
         </div>
-
       </div>
     </div>
   );

@@ -3,23 +3,24 @@ import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import Register from './pages/Register';
 import Login from './pages/Login';
+import Home from './pages/Home';
+import AdminDashboard from './pages/AdminDashboard'; // <-- Nueva importación
 
-// Componente de seguridad: Expulsa a los que no tengan token
+// Guardián para jugadores normales
 const PrivateRoute = ({ children }: { children: ReactNode }) => {
   const { isAuthenticated } = useAuth();
-  return isAuthenticated ? children : <Navigate to="/login" replace />;
+  return isAuthenticated ? <>{children}</> : <Navigate to="/login" replace />;
 };
 
-// Pantalla principal temporal
-const Home = () => {
-  const { user, logout } = useAuth();
-  return (
-    <div className="p-8 text-center">
-      <h1 className="text-3xl text-red-500 mb-4">Bienvenido, {user?.name}</h1>
-      <p className="mb-4">Tu identidad ha sido verificada.</p>
-      <button onClick={logout} className="bg-gray-700 px-4 py-2 rounded">Cerrar Sesión</button>
-    </div>
-  );
+// Guardián estricto para el Director del Juego
+const AdminRoute = ({ children }: { children: ReactNode }) => {
+  const { isAuthenticated, user } = useAuth();
+  
+  if (!isAuthenticated) return <Navigate to="/login" replace />;
+  // Si está logueado pero no tiene el booleano isAdmin a true, lo mandamos a su Home de jugador
+  if (!user?.isAdmin) return <Navigate to="/" replace />; 
+  
+  return <>{children}</>;
 };
 
 export default function App() {
@@ -27,11 +28,9 @@ export default function App() {
     <AuthProvider>
       <BrowserRouter>
         <Routes>
-          {/* Ruta pública */}
           <Route path="/login" element={<Login />} />
           <Route path="/register" element={<Register />} />
 
-          {/* Rutas privadas */}
           <Route 
             path="/" 
             element={
@@ -41,7 +40,16 @@ export default function App() {
             } 
           />
           
-          {/* Ruta por defecto (404) */}
+          {/* NUEVA RUTA DE ADMINISTRADOR */}
+          <Route 
+            path="/admin" 
+            element={
+              <AdminRoute>
+                <AdminDashboard />
+              </AdminRoute>
+            } 
+          />
+          
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </BrowserRouter>
