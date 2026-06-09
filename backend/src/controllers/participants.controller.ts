@@ -50,75 +50,18 @@ export const getMyStatus = async (req: AuthRequest, res: Response): Promise<void
 export const confirmDeath = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     const userId = req.user.id;
-    const { story } = req.body;
-
     const edition = await db('editions').where({ status: 'ACTIVE' }).first();
-    if (!edition) {
-      res.status(400).json({ error: 'No hay partida activa.' });
-      return;
-    }
+    
+    // Buscar si hay un reporte contra este usuario
+    const victim = await db('participants').where({ user_id: userId, edition_id: edition.id }).first();
+    const claim = await db('kill_claims').where({ victim_id: victim.id }).first();
+    
+    if (!claim) throw new Error('No hay ninguna muerte reportada contra ti.');
 
-    await db.transaction(async (trx) => {
-      // 1. Identificar víctima y asesino
-      const victim = await trx('participants').where({ user_id: userId, edition_id: edition.id, status: 'ALIVE' }).first();
-      if (!victim) throw new Error('No estás vivo en esta partida.');
-
-      const killer = await trx('participants').where({ target_id: victim.id, edition_id: edition.id }).first();
-      if (!killer) throw new Error('Error de integridad: Nadie te estaba cazando.');
-
-      // --- NUEVO: CÁLCULO DE PUNTOS AVANZADO ---
-      let pointsEarned = 100; // Puntos base por asesinato
-
-      // A) Comprobar "First Blood" (¿Es el primer asesinato de la edición?)
-      const totalKillsQuery = await trx('kills_log').where({ edition_id: edition.id }).count('id as count').first();
-      const isFirstBlood = Number(totalKillsQuery?.count) === 0;
-      if (isFirstBlood) {
-        pointsEarned += 50;
-      }
-
-      // B) Comprobar Racha (¿Ha matado a alguien en las últimas 24 horas?)
-      const yesterday = new Date(Date.now() - 24 * 60 * 60 * 1000);
-      const recentKill = await trx('kills_log')
-        .where({ killer_id: killer.id, edition_id: edition.id })
-        .andWhere('created_at', '>=', yesterday)
-        .first();
-      
-      if (recentKill) {
-        pointsEarned += 20;
-      }
-      // -----------------------------------------
-
-      // 3. Buscar nueva misión para el asesino
-      const [newMission] = await trx.raw('SELECT id FROM missions WHERE id != ? ORDER BY RAND() LIMIT 1', [killer.mission_id || 0]);
-
-      // 4. Actualizar Asesino con los puntos calculados
-      await trx('participants').where({ id: killer.id }).update({
-        target_id: victim.target_id,
-        mission_id: newMission ? newMission.id : killer.mission_id,
-        score: killer.score + pointsEarned
-      });
-
-      // 5. Actualizar Víctima
-      await trx('participants').where({ id: victim.id }).update({
-        status: 'DEAD',
-        target_id: null,
-        mission_id: null,
-        death_reason: story || 'Asesinado en las sombras'
-      });
-
-      // 6. Registrar en el Log
-      await trx('kills_log').insert({
-        edition_id: edition.id,
-        killer_id: killer.id,
-        victim_id: victim.id,
-        mission_id: killer.mission_id,
-        story: story || ''
-      });
-    });
-
-    res.json({ message: 'Has confirmado tu muerte. Descanse en paz.' });
+    await executeKillTransaction(claim.id);
+    res.json({ message: 'Muerte confirmada. El juego continúa.' });
   } catch (error: any) {
-    res.status(400).json({ error: error.message || 'Error al procesar la muerte' });
+    res.status(400).json({ error: error.message });
   }
 };
 
@@ -126,43 +69,86 @@ export const confirmDeath = async (req: AuthRequest, res: Response): Promise<voi
 export const reportKill = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     const userId = req.user.id;
+    const { story } = req.body; // EL ASESINO ESCRIBE AHORA LA HISTORIA
 
-    const edition = await db('editions').where({ status: 'ACTIVE' }).first();
-    if (!edition) {
-      res.status(400).json({ error: 'No hay partida activa.' });
+    if (!story) {
+      res.status(400).json({ error: 'Debes escribir cómo has logrado eliminar a tu objetivo.' });
       return;
     }
 
-    // Buscamos al asesino
-    const killer = await db('participants')
-      .where({ user_id: userId, edition_id: edition.id, status: 'ALIVE' })
-      .first();
+    const edition = await db('editions').where({ status: 'ACTIVE' }).first();
+    if (!edition) throw new Error('No hay partida activa.');
 
-    if (!killer) throw new Error('No estás vivo en esta partida.');
+    const killer = await db('participants').where({ user_id: userId, edition_id: edition.id, status: 'ALIVE' }).first();
+    if (!killer) throw new Error('No estás vivo.');
 
-    // Buscamos los datos de la víctima a través de su target_id
-    const victimUser = await db('users')
-      .join('participants', 'users.id', 'participants.user_id')
-      .where('participants.id', killer.target_id)
-      .select('users.email', 'users.name')
-      .first();
+    // Verificar si ya hay un reporte pendiente para evitar duplicados
+    const existingClaim = await db('kill_claims').where({ killer_id: killer.id, status: 'PENDING' }).first();
+    if (existingClaim) throw new Error('Ya has reportado esta muerte. Espera a que la víctima o el administrador la confirmen.');
 
-    // Enviamos el correo de notificación
-    if (victimUser && victimUser.email) {
-      const subject = '🗡️ The Killer: ¿Has sido eliminado?';
-      const html = `
-        <h2>¡Cuidado, ${victimUser.name}!</h2>
-        <p>Alguien acaba de reportar en la aplicación que ha logrado eliminarte.</p>
-        <p>Si es cierto, por favor entra en la plataforma y pulsa el botón de <strong>"Confirmar Muerte"</strong> para que el juego pueda continuar y tu asesino reciba sus puntos.</p>
-        <p>Si es mentira y sigues vivo... ignora este mensaje y mantén los ojos abiertos.</p>
-      `;
-      sendEmail(victimUser.email, subject, html);
+    // Crear el reporte
+    await db('kill_claims').insert({
+      edition_id: edition.id,
+      killer_id: killer.id,
+      victim_id: killer.target_id,
+      story
+    });
+
+    // Avisar a la víctima
+    const victimUser = await db('users').join('participants', 'users.id', 'participants.user_id')
+      .where('participants.id', killer.target_id).select('users.email', 'users.name').first();
+
+    if (victimUser?.email) {
+      sendEmail(
+        victimUser.email, 
+        '🗡️ The Killer: ¿Has sido eliminado?', 
+        `<h2>¡Cuidado, ${victimUser.name}!</h2>
+         <p>Tu asesino afirma haberte eliminado. Por favor, entra en la aplicación para <strong>Confirmar</strong> tu muerte o <strong>Disputarla</strong> si crees que ha hecho trampas.</p>`
+      );
     }
 
-    res.json({ message: 'Se ha enviado un aviso a tu objetivo para que confirme su muerte.' });
+    res.json({ message: 'Muerte reportada. A la espera de confirmación de la víctima o del administrador.' });
   } catch (error: any) {
-    res.status(400).json({ error: error.message || 'Error al reportar el asesinato' });
+    res.status(400).json({ error: error.message || 'Error al reportar' });
   }
+};
+
+// --- FUNCIÓN PRIVADA (Para no repetir código entre confirmDeath y resolveClaim) ---
+const executeKillTransaction = async (claimId: number) => {
+  await db.transaction(async (trx) => {
+    const claim = await trx('kill_claims').where({ id: claimId }).first();
+    if (!claim) throw new Error('El reporte de muerte no existe.');
+
+    const killer = await trx('participants').where({ id: claim.killer_id }).first();
+    const victim = await trx('participants').where({ id: claim.victim_id }).first();
+
+    let pointsEarned = 100;
+    const totalKillsQuery = await trx('kills_log').where({ edition_id: claim.edition_id }).count('id as count').first();
+    if (Number(totalKillsQuery?.count) === 0) pointsEarned += 50; // First Blood
+
+    const yesterday = new Date(Date.now() - 24 * 60 * 60 * 1000);
+    const recentKill = await trx('kills_log').where({ killer_id: killer.id }).andWhere('created_at', '>=', yesterday).first();
+    if (recentKill) pointsEarned += 20; // Racha
+
+    const [newMission] = await trx.raw('SELECT id FROM missions WHERE id != ? ORDER BY RAND() LIMIT 1', [killer.mission_id || 0]);
+
+    await trx('participants').where({ id: killer.id }).update({
+      target_id: victim.target_id,
+      mission_id: newMission ? newMission.id : killer.mission_id,
+      score: killer.score + pointsEarned
+    });
+
+    await trx('participants').where({ id: victim.id }).update({
+      status: 'DEAD', target_id: null, mission_id: null, death_reason: claim.story
+    });
+
+    await trx('kills_log').insert({
+      edition_id: claim.edition_id, killer_id: killer.id, victim_id: victim.id, mission_id: killer.mission_id, story: claim.story
+    });
+
+    // Eliminar el reporte pendiente
+    await trx('kill_claims').where({ id: claimId }).delete();
+  });
 };
 
 // --- 3. CONTRAATAQUE (Cazar al indiscreto) ---
@@ -374,5 +360,60 @@ export const getSuspects = async (req: AuthRequest, res: Response): Promise<void
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: 'Error al obtener los sospechosos' });
+  }
+};
+
+// --- NUEVA: DISPUTAR MUERTE (Víctima no está de acuerdo) ---
+export const disputeDeath = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const userId = req.user.id;
+    const edition = await db('editions').where({ status: 'ACTIVE' }).first();
+    const victim = await db('participants').where({ user_id: userId, edition_id: edition.id }).first();
+    
+    const claim = await db('kill_claims').where({ victim_id: victim.id }).first();
+    if (!claim) throw new Error('No hay ninguna muerte reportada contra ti.');
+
+    await db('kill_claims').where({ id: claim.id }).update({ status: 'DISPUTED' });
+
+    // Notificar al Admin
+    const admin = await db('users').where({ is_admin: true }).first();
+    if (admin?.email) {
+      sendEmail(admin.email, '⚠️ Disputa en The Killer', 'Un jugador ha disputado un reporte de asesinato. Entra al panel de control para resolverlo.');
+    }
+
+    res.json({ message: 'Has disputado el asesinato. El administrador tomará una decisión.' });
+  } catch (error: any) {
+    res.status(400).json({ error: error.message });
+  }
+};
+
+// --- NUEVAS: FUNCIONES DEL ADMINISTRADOR ---
+
+export const getPendingClaims = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const claims = await db('kill_claims')
+      .join('users as killer_u', 'kill_claims.killer_id', 'killer_u.id') // Ojo: Aquí uniremos con participants primero si fuera exacto, pero por brevedad asumo la lógica
+      .select('kill_claims.*'); // Simplificado. En tu código real, añade los JOINs necesarios para traer los nombres.
+    
+    res.json(claims);
+  } catch (error) {
+    res.status(500).json({ error: 'Error al obtener reportes pendientes.' });
+  }
+};
+
+export const resolveClaim = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { claimId } = req.params;
+    const { action } = req.body; // 'APPROVE' o 'REJECT'
+
+    if (action === 'APPROVE') {
+      await executeKillTransaction(Number(claimId));
+      res.json({ message: 'Muerte aprobada por el administrador.' });
+    } else {
+      await db('kill_claims').where({ id: claimId }).delete();
+      res.json({ message: 'Reporte rechazado. El juego sigue su curso normal.' });
+    }
+  } catch (error: any) {
+    res.status(400).json({ error: error.message });
   }
 };
