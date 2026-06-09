@@ -1,0 +1,29 @@
+name: Deploy The Killer 2.0
+
+# Se ejecutará automáticamente cuando hagas un 'git push' a la rama 'main'
+on:
+  push:
+    branches: [ "main" ]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Conectar por SSH y actualizar contenedores
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.HOST }}
+          username: ${{ secrets.USERNAME }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          # IMPORTANTE: Cambia la ruta en 'cd' por la ruta real de tu proyecto en el servidor
+          script: |
+            cd /ruta/absoluta/hacia/tu/proyecto/the-killer
+            
+            # Descargar los últimos cambios del repositorio
+            git pull origin main
+            
+            # Reconstruir y levantar solo los contenedores del juego en segundo plano
+            docker compose up -d --build killer-backend killer-frontend
+            
+            # Limpiar imágenes antiguas de Docker para que el disco no se llene
+            docker image prune -f

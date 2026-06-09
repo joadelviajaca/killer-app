@@ -1,5 +1,6 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider, useAuth } from './context/AuthContext';
+import Register from './pages/Register';
 import Login from './pages/Login';
 
 // Componente de seguridad: Expulsa a los que no tengan token
@@ -27,6 +28,7 @@ export default function App() {
         <Routes>
           {/* Ruta pública */}
           <Route path="/login" element={<Login />} />
+          <Route path="/register" element={<Register />} />
 
           {/* Rutas privadas */}
           <Route 

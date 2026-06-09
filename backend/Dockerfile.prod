@@ -1,0 +1,8 @@
+FROM node:20-alpine
+WORKDIR /app
+COPY package*.json ./
+RUN npm install --omit=dev
+COPY . .
+# Si estás usando tsx, puedes mantenerlo, pero lo ideal es compilar. 
+# Para mantenerlo simple, usaremos tsx en producción por ahora:
+CMD ["npx", "tsx", "src/index.ts"]
