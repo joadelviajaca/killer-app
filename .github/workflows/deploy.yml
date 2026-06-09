@@ -18,7 +18,7 @@ jobs:
           port: 2223
           # IMPORTANTE: Cambia la ruta en 'cd' por la ruta real de tu proyecto en el servidor
           script: |
-            cd /srv/the-killer
+            cd /srv/killer-app
             
             # Descargar los últimos cambios del repositorio
             git pull origin main
