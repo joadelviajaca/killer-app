@@ -23,6 +23,7 @@ jobs:
             # Descargar los últimos cambios del repositorio
             git pull origin main
             
+            cd ..
             # Reconstruir y levantar solo los contenedores del juego en segundo plano
             docker compose up -d --build killer-backend killer-frontend
             
