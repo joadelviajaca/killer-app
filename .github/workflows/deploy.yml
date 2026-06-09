@@ -17,7 +17,7 @@ jobs:
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           # IMPORTANTE: Cambia la ruta en 'cd' por la ruta real de tu proyecto en el servidor
           script: |
-            cd /ruta/absoluta/hacia/tu/proyecto/the-killer
+            cd /srv/the-killer
             
             # Descargar los últimos cambios del repositorio
             git pull origin main
