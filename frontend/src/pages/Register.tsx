@@ -51,8 +51,8 @@ export default function Register() {
               type="text"
               required
               className="w-full bg-gray-900 text-white border border-gray-700 rounded px-4 py-2 focus:outline-none focus:border-red-500"
-              value={formData.alias}
-              onChange={(e) => setFormData({...formData, alias: e.target.value})}
+              value={formData.avatar}
+              onChange={(e) => setFormData({...formData, avatar: e.target.value})}
             />
             <p className="text-xs text-gray-500 mt-1 italic">
               Este será tu nombre en el ranking público de asesinatos. ¡Elige algo no muy obvio para mantener tu identidad en secreto!
