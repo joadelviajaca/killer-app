@@ -15,6 +15,7 @@ jobs:
           host: ${{ secrets.HOST }}
           username: ${{ secrets.USERNAME }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
+          port: 2223
           # IMPORTANTE: Cambia la ruta en 'cd' por la ruta real de tu proyecto en el servidor
           script: |
             cd /srv/the-killer
