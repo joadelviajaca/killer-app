@@ -60,8 +60,6 @@ export default function AdminDashboard() {
   const [editFormData, setEditFormData] = useState({ name: '', email: '', avatar: '' });
   const [isSubmittingEdit, setIsSubmittingEdit] = useState(false);
 
-  // Estado para pruebas de envío de email (no se muestra en la UI, solo para testear internamente)
-  const [isTestingEmail, setIsTestingEmail] = useState(false);
 
   useEffect(() => {
     fetchDashboardData();
@@ -94,22 +92,6 @@ export default function AdminDashboard() {
       console.error("Error al cargar los datos del dashboard", error);
     } finally {
       setLoading(false);
-    }
-  };
-
-  // Función para probar la configuración de email (puede ser un botón oculto o una opción en el menú)
-  const handleTestEmail = async () => {
-    const testEmail = window.prompt('Introduce un correo electrónico para enviar la prueba:');
-    if (!testEmail) return;
-
-    setIsTestingEmail(true);
-    try {
-      const res = await api.post('/admin/test-email', { email: testEmail });
-      alert(res.data.message);
-    } catch (error: any) {
-      alert(error.response?.data?.error || 'Error al enviar el correo de prueba.');
-    } finally {
-      setIsTestingEmail(false);
     }
   };
 
@@ -248,14 +230,7 @@ export default function AdminDashboard() {
           )}
         </div>
 
-        {/* NUEVO BOTÓN DE PRUEBA DE CORREO */}
-          <button
-            onClick={handleTestEmail}
-            disabled={isTestingEmail}
-            className="mt-4 w-full text-xs font-bold uppercase tracking-wider bg-gray-700 hover:bg-gray-600 px-3 py-2 rounded text-gray-300 hover:text-white transition-colors flex justify-center items-center gap-2"
-          >
-            {isTestingEmail ? 'Enviando pings...' : '✉️ Probar Servidor de Correo'}
-          </button>
+      
 
         <div className="bg-gray-800 p-6 rounded-xl border border-gray-700">
           <h3 className="text-gray-400 text-sm font-bold uppercase mb-2">Edición Actual</h3>
