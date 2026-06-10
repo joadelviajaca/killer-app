@@ -10,6 +10,7 @@ import missionsRoutes from './routes/missions.routes.js';
 import editionsRoutes from './routes/editions.routes.js';
 import participantsRoutes from './routes/participants.routes.js';
 import socialRoutes from './routes/social.routes.js';
+import adminRoutes from './routes/admin.routes.js';
 
 // Cargamos las variables de entorno
 dotenv.config();
@@ -23,6 +24,7 @@ app.use(express.json()); // Permite recibir datos en formato JSON en el body de 
 
 // Rutas
 app.use('/api/auth', authRoutes);
+app.use('/api/admin', adminRoutes);
 app.use('/api/missions', missionsRoutes);
 app.use('/api/editions', editionsRoutes);
 app.use('/api/particpants', participantsRoutes);
