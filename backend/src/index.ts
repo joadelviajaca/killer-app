@@ -27,7 +27,7 @@ app.use('/api/auth', authRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/missions', missionsRoutes);
 app.use('/api/editions', editionsRoutes);
-app.use('/api/particpants', participantsRoutes);
+app.use('/api/participants', participantsRoutes);
 app.use('/api/social', socialRoutes);
 
 // Encender el motor de tareas automáticas

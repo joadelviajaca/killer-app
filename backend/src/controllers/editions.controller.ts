@@ -160,3 +160,49 @@ export const finishEdition = async (req: Request, res: Response): Promise<void> 
     res.status(500).json({ error: 'Error al finalizar la edición.' });
   }
 };
+
+// NUEVA: Obtener los participantes inscritos en una edición
+export const getEditionParticipants = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { id } = req.params;
+    const participants = await db('participants')
+      .join('users', 'participants.user_id', 'users.id')
+      .where({ 'participants.edition_id': id })
+      .select(
+        'participants.id as participant_id', 
+        'users.id as user_id', 
+        'users.name', 
+        'users.email', 
+        'users.avatar', 
+        'participants.status'
+      )
+      .orderBy('users.name', 'asc');
+      
+    res.json(participants);
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Error al obtener los participantes.' });
+  }
+};
+
+// NUEVA: Expulsar a un participante ANTES de arrancar el juego
+export const removeParticipant = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { id: editionId, participantId } = req.params;
+
+    const edition = await db('editions').where({ id: editionId }).first();
+    
+    // Medida de seguridad: Proteger el círculo
+    if (edition.status !== 'CREATING') {
+      res.status(400).json({ error: 'El juego ya ha comenzado. El jugador debe abandonar usando la opción de Suicidio en su panel.' });
+      return;
+    }
+
+    await db('participants').where({ id: participantId, edition_id: editionId }).del();
+    
+    res.json({ message: 'Participante expulsado de la edición.' });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Error al expulsar al participante.' });
+  }
+};

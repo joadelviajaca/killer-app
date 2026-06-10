@@ -3,7 +3,7 @@ import { AuthRequest } from '../middlewares/auth.middleware.js';
 import { sendEmail } from '../services/email.service.js';
 import db from '../db.js';
 
-// --- 1. VER MI OBJETIVO Y MISIÓN ---
+// --- 1. VER MI ESTADO, OBJETIVO Y MISIÓN ---
 export const getMyStatus = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     const userId = req.user.id;
@@ -20,12 +20,32 @@ export const getMyStatus = async (req: AuthRequest, res: Response): Promise<void
       .where({ user_id: userId, edition_id: edition.id })
       .first();
 
-    if (!me || me.status !== 'ALIVE') {
-      res.json({ message: 'Estás muerto o no participas.', status: me?.status || 'NOT_FOUND' });
+    if (!me) {
+      res.json({ message: 'No participas.', status: 'NOT_FOUND' });
       return;
     }
 
-    // Obtenemos los datos legibles del objetivo y la misión
+    // SI ESTÁ MUERTO O DESCALIFICADO: Buscamos quién le mató
+    if (me.status === 'DEAD' || me.status === 'DISQUALIFIED') {
+      // Buscamos el registro de su muerte en kills_log uniéndolo con el asesino
+      const killRecord = await db('kills_log')
+        .join('participants as killer_p', 'kills_log.killer_id', 'killer_p.id')
+        .join('users as killer_u', 'killer_p.user_id', 'killer_u.id')
+        .where('kills_log.victim_id', me.id)
+        .select('killer_u.name as killer_name', 'kills_log.story')
+        .first();
+
+      res.json({
+        status: me.status,
+        score: me.score,
+        // Si no hay killRecord (ej. se suicidó), usamos el death_reason que guardamos en participants
+        killerName: killRecord?.killer_name || 'La organización (o a sí mismo)',
+        deathReason: killRecord?.story || me.death_reason || 'No hay registros de cómo ocurrió.'
+      });
+      return; // Cortamos aquí para que no busque objetivos
+    }
+
+    // SI ESTÁ VIVO: Obtenemos los datos legibles del objetivo y la misión
     const target = await db('participants')
       .join('users', 'participants.user_id', 'users.id')
       .where('participants.id', me.target_id)
@@ -34,12 +54,26 @@ export const getMyStatus = async (req: AuthRequest, res: Response): Promise<void
 
     const mission = await db('missions').where({ id: me.mission_id }).first();
 
+    // Buscamos si hay un reporte pendiente contra el usuario actual
+    const pendingClaim = await db('kill_claims')
+      .where({ victim_id: me.id, status: 'PENDING' })
+      .first();
+
+    const aliveQuery = await db('participants')
+      .where({ edition_id: edition.id, status: 'ALIVE' })
+      .count('id as count')
+      .first();
+    const aliveCount = Number(aliveQuery?.count || 0);
+
     res.json({
       status: 'ALIVE',
       score: me.score,
       target: target?.name,
       targetAvatar: target?.avatar,
-      mission: mission?.description
+      mission: mission?.description,
+      pendingClaim: !!pendingClaim,
+      claimStory: pendingClaim?.story,
+      aliveCount
     });
   } catch (error) {
     res.status(500).json({ error: 'Error al obtener tu estado' });
@@ -164,6 +198,17 @@ export const counterAttack = async (req: AuthRequest, res: Response): Promise<vo
 
     const edition = await db('editions').where({ status: 'ACTIVE' }).first();
     if (!edition) throw new Error('No hay partida activa.');
+
+    // NUEVO: Bloqueo por Muerte Súbita
+    const aliveQuery = await db('participants')
+      .where({ edition_id: edition.id, status: 'ALIVE' })
+      .count('id as count')
+      .first();
+      
+    if (Number(aliveQuery?.count) <= 5) {
+      res.status(400).json({ error: 'Operación denegada. El juego está en fase de Muerte Súbita.' });
+      return;
+    }
 
     // Variables para almacenar los datos de los correos y enviarlos al final
     let clumsyKillerEmail = '';
@@ -392,8 +437,19 @@ export const disputeDeath = async (req: AuthRequest, res: Response): Promise<voi
 export const getPendingClaims = async (req: Request, res: Response): Promise<void> => {
   try {
     const claims = await db('kill_claims')
-      .join('users as killer_u', 'kill_claims.killer_id', 'killer_u.id') // Ojo: Aquí uniremos con participants primero si fuera exacto, pero por brevedad asumo la lógica
-      .select('kill_claims.*'); // Simplificado. En tu código real, añade los JOINs necesarios para traer los nombres.
+      .join('participants as killer_p', 'kill_claims.killer_id', 'killer_p.id')
+      .join('users as killer_u', 'killer_p.user_id', 'killer_u.id')
+      .join('participants as victim_p', 'kill_claims.victim_id', 'victim_p.id')
+      .join('users as victim_u', 'victim_p.user_id', 'victim_u.id')
+      .select(
+        'kill_claims.id',
+        'kill_claims.story',
+        'kill_claims.status',
+        'kill_claims.created_at',
+        'killer_u.name as killer_name',
+        'victim_u.name as victim_name'
+      )
+      .orderBy('kill_claims.created_at', 'desc');
     
     res.json(claims);
   } catch (error) {

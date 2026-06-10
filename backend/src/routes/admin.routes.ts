@@ -1,10 +1,15 @@
 import { Router } from 'express';
-import { getUsers } from '../controllers/admin.controller';
-import { verifyToken, requireAdmin } from '../middlewares/auth.middleware';
+import { getUsers, updateUser, deleteUser, testEmailConfig } from '../controllers/admin.controller.js';
+import { verifyToken, requireAdmin } from '../middlewares/auth.middleware.js';
 
 const router = Router();
 
-// Ruta protegida por DOBLE middleware: tienes que estar logueado Y ser admin
-router.get('/users', verifyToken, requireAdmin, getUsers);
+// Aplicamos el middleware a todas las rutas de este archivo
+router.use(verifyToken, requireAdmin);
+
+router.get('/users', getUsers);
+router.put('/users/:id', updateUser); // NUEVA
+router.delete('/users/:id', deleteUser); // NUEVA
+router.post('/test-email', testEmailConfig);
 
 export default router;

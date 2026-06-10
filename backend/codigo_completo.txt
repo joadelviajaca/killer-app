@@ -1,0 +1,1297 @@
+===========================================================
+// Archivo: src/db.ts
+===========================================================
+import knex from 'knex';
+import knexConfig from '../knexfile.js';
+
+// Seleccionamos el entorno (por defecto usará 'development' que definimos en knexfile)
+const environment = process.env.NODE_ENV || 'development';
+const db = knex(knexConfig[environment]);
+
+export default db;
+
+
+===========================================================
+// Archivo: src/middlewares/auth.middleware.ts
+===========================================================
+import { Request, Response, NextFunction } from 'express';
+import jwt from 'jsonwebtoken';
+
+const SECRET = process.env.JWT_SECRET || 'clave_fallback_insegura';
+
+// 1. Extendemos la interfaz Request de Express para poder inyectarle nuestro usuario
+export interface AuthRequest extends Request {
+  user?: any; // Aquí guardaremos los datos del token desencriptado
+}
+
+// 2. Guardián Básico: Comprueba si el usuario está logueado
+export const verifyToken = (req: AuthRequest, res: Response, next: NextFunction): void => {
+  const authHeader = req.headers.authorization;
+
+  // El estándar es enviar el token en la cabecera así: "Bearer eyJhbGci..."
+  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    res.status(403).json({ error: 'Acceso denegado. No se proporcionó un token válido.' });
+    return;
+  }
+
+  const token = authHeader.split(' ')[1];
+
+  try {
+    // Desencriptamos el token. Si es inválido o caducó, esto lanzará un error y saltará al catch
+    const decoded = jwt.verify(token, SECRET);
+    
+    // Inyectamos los datos del usuario (id, email, isAdmin) en la petición
+    req.user = decoded; 
+    
+    // Todo en orden, dejamos pasar la petición al controlador
+    next(); 
+  } catch (error) {
+    res.status(401).json({ error: 'Token inválido o expirado. Vuelve a iniciar sesión.' });
+  }
+};
+
+// 3. Guardián VIP: Comprueba si además es administrador
+export const requireAdmin = (req: AuthRequest, res: Response, next: NextFunction): void => {
+  // Primero debe haber pasado por verifyToken, así que req.user ya debería existir
+  if (!req.user || !req.user.isAdmin) {
+    res.status(403).json({ error: 'Acceso denegado. Se requieren privilegios de administrador.' });
+    return;
+  }
+  
+  next();
+};
+
+
+===========================================================
+// Archivo: src/routes/participants.routes.ts
+===========================================================
+import { Router } from 'express';
+import { getMyStatus, confirmDeath, counterAttack, suicide, reportKill, getSuspects, disputeDeath, getPendingClaims, resolveClaim } from '../controllers/participants.controller.js';
+import { requireAdmin, verifyToken } from '../middlewares/auth.middleware.js';
+
+const router = Router();
+
+// Todas las rutas de participantes requieren estar logueado
+router.use(verifyToken);
+
+// Ver mi estado
+router.get('/me', getMyStatus);
+
+// Acciones de juego
+router.get('/suspects', getSuspects);
+router.post('/report-kill', reportKill);
+router.post('/confirm-death', confirmDeath);
+router.post('/dispute-death', disputeDeath);
+router.post('/counterattack', counterAttack);
+router.post('/suicide', suicide);
+
+
+// Rutas de Admin
+router.get('/claims', requireAdmin, getPendingClaims); // <-- NUEVA
+router.post('/claims/:claimId/resolve', requireAdmin, resolveClaim); // <-- NUEVA
+
+
+export default router;
+
+
+===========================================================
+// Archivo: src/routes/editions.routes.ts
+===========================================================
+import { Router } from 'express';
+import { 
+  createEdition, 
+  getCurrentEdition, 
+  getAllEditions,
+  joinEdition,
+  startEdition,
+  finishEdition 
+} from '../controllers/editions.controller.js';
+import { verifyToken, requireAdmin } from '../middlewares/auth.middleware.js';
+
+const router = Router();
+
+// Rutas de Lectura
+router.get('/current', verifyToken, getCurrentEdition);
+router.get('/', verifyToken, requireAdmin, getAllEditions);
+
+// Creación de Edición
+router.post('/', verifyToken, requireAdmin, createEdition);
+
+// Acciones sobre una edición específica (Fíjate en el parámetro :id)
+router.post('/:id/join', verifyToken, joinEdition); // Cualquiera con token puede unirse
+router.post('/:id/start', verifyToken, requireAdmin, startEdition); // Solo Admin
+router.post('/:id/finish', verifyToken, requireAdmin, finishEdition); // Solo Admin
+
+export default router;
+
+
+===========================================================
+// Archivo: src/routes/missions.routes.ts
+===========================================================
+import { Router } from 'express';
+import { getMissions, createMission, createMissionsBulk } from '../controllers/missions.controller.js';
+import { verifyToken, requireAdmin } from '../middlewares/auth.middleware.js';
+
+const router = Router();
+
+// Cualquier usuario logueado puede ver el banco de misiones (opcional, podrías restringirlo también a admin)
+router.get('/', verifyToken, requireAdmin, getMissions);
+
+// Endpoint masivo (Bulk)
+router.post('/bulk', verifyToken, requireAdmin, createMissionsBulk);
+
+// SOLO un administrador puede crear nuevas misiones
+router.post('/', verifyToken, requireAdmin, createMission);
+
+export default router;
+
+
+===========================================================
+// Archivo: src/routes/social.routes.ts
+===========================================================
+import { Router } from 'express';
+import { getRanking, getFeed, likeKill } from '../controllers/social.controller.js';
+import { verifyToken } from '../middlewares/auth.middleware.js';
+
+const router = Router();
+
+// Todas las consultas sociales requieren estar logueado en el juego
+router.use(verifyToken);
+
+router.get('/ranking', getRanking);
+router.get('/feed', getFeed);
+router.post('/feed/:id/like', likeKill);
+
+export default router;
+
+
+===========================================================
+// Archivo: src/routes/auth.routes.ts
+===========================================================
+import { Router } from 'express';
+import { register, login } from '../controllers/auth.controller.js';
+
+const router = Router();
+
+// Endpoint: POST /api/auth/register
+router.post('/register', register);
+
+// Endpoint: POST /api/auth/login
+router.post('/login', login);
+
+export default router;
+
+
+===========================================================
+// Archivo: src/routes/admin.routes.ts
+===========================================================
+import { Router } from 'express';
+import { getUsers } from '../controllers/admin.controller';
+import { verifyToken, requireAdmin } from '../middlewares/auth.middleware';
+
+const router = Router();
+
+// Ruta protegida por DOBLE middleware: tienes que estar logueado Y ser admin
+router.get('/users', verifyToken, requireAdmin, getUsers);
+
+export default router;
+
+
+===========================================================
+// Archivo: src/controllers/missions.controller.ts
+===========================================================
+import { Request, Response } from 'express';
+import db from '../db.js';
+
+export const getMissions = async (req: Request, res: Response): Promise<void> => {
+  try {
+    // Obtenemos todas las misiones de la base de datos
+    const missions = await db('missions').select('*');
+    res.json(missions);
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Error al obtener el banco de misiones' });
+  }
+};
+
+export const createMission = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { description, difficulty } = req.body;
+
+    if (!description) {
+      res.status(400).json({ error: 'La descripción de la misión es obligatoria' });
+      return;
+    }
+
+    // Insertamos la nueva misión. Si no envían dificultad, por defecto será 'MEDIUM'
+    const [id] = await db('missions').insert({
+      description,
+      difficulty: difficulty || 'MEDIUM',
+      is_active: true
+    });
+
+    res.status(201).json({ 
+      message: 'Misión añadida al banco con éxito', 
+      mission: { id, description, difficulty: difficulty || 'MEDIUM' } 
+    });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Error al crear la misión' });
+  }
+};
+
+export const createMissionsBulk = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const missionsArray = req.body;
+
+    // 1. Validar que nos han enviado un Array
+    if (!Array.isArray(missionsArray) || missionsArray.length === 0) {
+      res.status(400).json({ error: 'Debes enviar un array JSON válido y no vacío.' });
+      return;
+    }
+
+    // 2. Filtrar y formatear los datos por seguridad
+    // Nos aseguramos de que solo pasen los objetos que tengan 'description'
+    const validMissions = missionsArray
+      .filter((m: any) => m.description && typeof m.description === 'string')
+      .map((m: any) => ({
+        description: m.description.trim(),
+        difficulty: ['EASY', 'MEDIUM', 'HARD'].includes(m.difficulty) ? m.difficulty : 'MEDIUM',
+        is_active: true
+      }));
+
+    if (validMissions.length === 0) {
+      res.status(400).json({ error: 'El array no contenía misiones con un formato válido.' });
+      return;
+    }
+
+    // 3. Inserción masiva en Knex (¡Mucha magia en una sola línea!)
+    await db('missions').insert(validMissions);
+
+    res.status(201).json({ 
+      message: 'Importación masiva completada', 
+      count: validMissions.length 
+    });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Error interno al importar las misiones' });
+  }
+};
+
+
+
+===========================================================
+// Archivo: src/controllers/auth.controller.ts
+===========================================================
+import { Request, Response } from 'express';
+import bcrypt from 'bcrypt';
+import jwt from 'jsonwebtoken';
+import db from '../db.js';
+
+const SECRET = process.env.JWT_SECRET || 'clave_fallback_insegura';
+
+export const register = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { name, email, password, avatar } = req.body;
+
+    // 1. Verificar si el usuario ya existe
+    const existingUser = await db('users').where({ email }).first();
+    if (existingUser) {
+      res.status(400).json({ error: 'El email ya está registrado' });
+      return;
+    }
+
+    // 2. Encriptar la contraseña
+    const saltRounds = 10;
+    const hashedPassword = await bcrypt.hash(password, saltRounds);
+
+    // 3. Guardar en la base de datos
+    const [id] = await db('users').insert({
+      name,
+      email,
+      password: hashedPassword,
+      avatar,
+      is_admin: false // Por defecto, el nuevo usuario no es admin
+    });
+
+    res.status(201).json({ message: 'Usuario registrado con éxito', userId: id });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Error al registrar el usuario' });
+  }
+};
+
+export const login = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { email, password } = req.body;
+
+    // 0. Validar que se recibieron email y password
+    if (!email || !password) {
+      res.status(400).json({ error: 'Falta el email o la contraseña en la petición' });
+      return;
+    }
+
+    // 1. Buscar al usuario
+    const user = await db('users').where({ email }).first();
+    if (!user) {
+      res.status(401).json({ error: 'Credenciales inválidas' });
+      return;
+    }
+
+    // 2. Comprobar la contraseña
+    const isPasswordValid = await bcrypt.compare(password, user.password);
+    if (!isPasswordValid) {
+      res.status(401).json({ error: 'Credenciales inválidas' });
+      return;
+    }
+
+    // 3. Generar el Token JWT
+    const token = jwt.sign(
+      { id: user.id, email: user.email, isAdmin: user.is_admin },
+      SECRET,
+      { expiresIn: '7d' } // El usuario no tendrá que hacer login en una semana
+    );
+
+    res.json({
+      message: 'Login exitoso',
+      token,
+      user: { id: user.id, name: user.name, isAdmin: user.is_admin }
+    });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Error al iniciar sesión' });
+  }
+};
+
+
+===========================================================
+// Archivo: src/controllers/participants.controller.ts
+===========================================================
+import { Response } from 'express';
+import { AuthRequest } from '../middlewares/auth.middleware.js';
+import { sendEmail } from '../services/email.service.js';
+import db from '../db.js';
+
+// --- 1. VER MI OBJETIVO Y MISIÓN ---
+export const getMyStatus = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const userId = req.user.id;
+
+    // Buscamos la edición activa
+    const edition = await db('editions').where({ status: 'ACTIVE' }).first();
+    if (!edition) {
+      res.json({ message: 'No hay ninguna partida activa.', status: 'WAITING' });
+      return;
+    }
+
+    // Buscamos al participante
+    const me = await db('participants')
+      .where({ user_id: userId, edition_id: edition.id })
+      .first();
+
+    if (!me || me.status !== 'ALIVE') {
+      res.json({ message: 'Estás muerto o no participas.', status: me?.status || 'NOT_FOUND' });
+      return;
+    }
+
+    // Obtenemos los datos legibles del objetivo y la misión
+    const target = await db('participants')
+      .join('users', 'participants.user_id', 'users.id')
+      .where('participants.id', me.target_id)
+      .select('users.name', 'users.avatar')
+      .first();
+
+    const mission = await db('missions').where({ id: me.mission_id }).first();
+
+    res.json({
+      status: 'ALIVE',
+      score: me.score,
+      target: target?.name,
+      targetAvatar: target?.avatar,
+      mission: mission?.description
+    });
+  } catch (error) {
+    res.status(500).json({ error: 'Error al obtener tu estado' });
+  }
+};
+
+// --- 2. CONFIRMAR MI MUERTE (El Asesinato) ---
+export const confirmDeath = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const userId = req.user.id;
+    const edition = await db('editions').where({ status: 'ACTIVE' }).first();
+    
+    // Buscar si hay un reporte contra este usuario
+    const victim = await db('participants').where({ user_id: userId, edition_id: edition.id }).first();
+    const claim = await db('kill_claims').where({ victim_id: victim.id }).first();
+    
+    if (!claim) throw new Error('No hay ninguna muerte reportada contra ti.');
+
+    await executeKillTransaction(claim.id);
+    res.json({ message: 'Muerte confirmada. El juego continúa.' });
+  } catch (error: any) {
+    res.status(400).json({ error: error.message });
+  }
+};
+
+// --- 2.5 REPORTAR ASESINATO (Avisar a la víctima) ---
+export const reportKill = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const userId = req.user.id;
+    const { story } = req.body; // EL ASESINO ESCRIBE AHORA LA HISTORIA
+
+    if (!story) {
+      res.status(400).json({ error: 'Debes escribir cómo has logrado eliminar a tu objetivo.' });
+      return;
+    }
+
+    const edition = await db('editions').where({ status: 'ACTIVE' }).first();
+    if (!edition) throw new Error('No hay partida activa.');
+
+    const killer = await db('participants').where({ user_id: userId, edition_id: edition.id, status: 'ALIVE' }).first();
+    if (!killer) throw new Error('No estás vivo.');
+
+    // Verificar si ya hay un reporte pendiente para evitar duplicados
+    const existingClaim = await db('kill_claims').where({ killer_id: killer.id, status: 'PENDING' }).first();
+    if (existingClaim) throw new Error('Ya has reportado esta muerte. Espera a que la víctima o el administrador la confirmen.');
+
+    // Crear el reporte
+    await db('kill_claims').insert({
+      edition_id: edition.id,
+      killer_id: killer.id,
+      victim_id: killer.target_id,
+      story
+    });
+
+    // Avisar a la víctima
+    const victimUser = await db('users').join('participants', 'users.id', 'participants.user_id')
+      .where('participants.id', killer.target_id).select('users.email', 'users.name').first();
+
+    if (victimUser?.email) {
+      sendEmail(
+        victimUser.email, 
+        '🗡️ The Killer: ¿Has sido eliminado?', 
+        `<h2>¡Cuidado, ${victimUser.name}!</h2>
+         <p>Tu asesino afirma haberte eliminado. Por favor, entra en la aplicación para <strong>Confirmar</strong> tu muerte o <strong>Disputarla</strong> si crees que ha hecho trampas.</p>`
+      );
+    }
+
+    res.json({ message: 'Muerte reportada. A la espera de confirmación de la víctima o del administrador.' });
+  } catch (error: any) {
+    res.status(400).json({ error: error.message || 'Error al reportar' });
+  }
+};
+
+// --- FUNCIÓN PRIVADA (Para no repetir código entre confirmDeath y resolveClaim) ---
+const executeKillTransaction = async (claimId: number) => {
+  await db.transaction(async (trx) => {
+    const claim = await trx('kill_claims').where({ id: claimId }).first();
+    if (!claim) throw new Error('El reporte de muerte no existe.');
+
+    const killer = await trx('participants').where({ id: claim.killer_id }).first();
+    const victim = await trx('participants').where({ id: claim.victim_id }).first();
+
+    let pointsEarned = 100;
+    const totalKillsQuery = await trx('kills_log').where({ edition_id: claim.edition_id }).count('id as count').first();
+    if (Number(totalKillsQuery?.count) === 0) pointsEarned += 50; // First Blood
+
+    const yesterday = new Date(Date.now() - 24 * 60 * 60 * 1000);
+    const recentKill = await trx('kills_log').where({ killer_id: killer.id }).andWhere('created_at', '>=', yesterday).first();
+    if (recentKill) pointsEarned += 20; // Racha
+
+    const [newMission] = await trx.raw('SELECT id FROM missions WHERE id != ? ORDER BY RAND() LIMIT 1', [killer.mission_id || 0]);
+
+    await trx('participants').where({ id: killer.id }).update({
+      target_id: victim.target_id,
+      mission_id: newMission ? newMission.id : killer.mission_id,
+      score: killer.score + pointsEarned
+    });
+
+    await trx('participants').where({ id: victim.id }).update({
+      status: 'DEAD', target_id: null, mission_id: null, death_reason: claim.story
+    });
+
+    await trx('kills_log').insert({
+      edition_id: claim.edition_id, killer_id: killer.id, victim_id: victim.id, mission_id: killer.mission_id, story: claim.story
+    });
+
+    // Eliminar el reporte pendiente
+    await trx('kill_claims').where({ id: claimId }).delete();
+  });
+};
+
+// --- 3. CONTRAATAQUE (Cazar al indiscreto) ---
+export const counterAttack = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const userId = req.user.id;
+    const { accusedUserId } = req.body; 
+
+    if (!accusedUserId) {
+      res.status(400).json({ error: 'Debes indicar a quién estás acusando.' });
+      return;
+    }
+
+    const edition = await db('editions').where({ status: 'ACTIVE' }).first();
+    if (!edition) throw new Error('No hay partida activa.');
+
+    // Variables para almacenar los datos de los correos y enviarlos al final
+    let clumsyKillerEmail = '';
+    let clumsyKillerName = '';
+    let hunterEmail = '';
+    let hunterName = '';
+    let defenderName = '';
+
+    await db.transaction(async (trx) => {
+      // 1. La "víctima" que se defiende (Hacemos JOIN para tener su nombre para el correo)
+      const defender = await trx('participants')
+        .join('users', 'participants.user_id', 'users.id')
+        .where({ 'participants.user_id': userId, 'participants.edition_id': edition.id, 'participants.status': 'ALIVE' })
+        .select('participants.*', 'users.name as user_name')
+        .first();
+
+      if (!defender) throw new Error('No estás vivo.');
+      defenderName = defender.user_name;
+
+      // 2. Comprobamos quién es su asesino REAL (JOIN para tener su correo)
+      const actualKiller = await trx('participants')
+        .join('users', 'participants.user_id', 'users.id')
+        .where({ 'participants.target_id': defender.id, 'participants.edition_id': edition.id })
+        .select('participants.*', 'users.email', 'users.name as user_name')
+        .first();
+      
+      // 3. LA LÓGICA DE LA PARANOIA (Falsa alarma)
+      if (actualKiller.user_id !== accusedUserId) {
+        await trx('participants').where({ id: defender.id }).update({
+          score: defender.score - 20
+        });
+        throw new Error('¡Falsa alarma! Esa persona NO era tu asesino. Has perdido 20 puntos por paranoico.');
+      }
+
+      // Guardamos los datos del asesino torpe para su correo
+      clumsyKillerEmail = actualKiller.email;
+      clumsyKillerName = actualKiller.user_name;
+
+      // 4. SI ACIERTA: La persona que estaba cazando al asesino torpe
+      const hunterOfKiller = await trx('participants')
+        .join('users', 'participants.user_id', 'users.id')
+        .where({ 'participants.target_id': actualKiller.id, 'participants.edition_id': edition.id })
+        .select('participants.*', 'users.email', 'users.name as user_name')
+        .first();
+
+      // Reparar el círculo
+      if (hunterOfKiller) {
+        hunterEmail = hunterOfKiller.email;
+        hunterName = hunterOfKiller.user_name;
+
+        await trx('participants').where({ id: hunterOfKiller.id }).update({
+          target_id: actualKiller.target_id
+        });
+      }
+
+      // Actualizar puntos del defensor
+      await trx('participants').where({ id: defender.id }).update({
+        score: defender.score + 50
+      });
+
+      // El asesino torpe muere y pierde puntos
+      await trx('participants').where({ id: actualKiller.id }).update({
+        status: 'DEAD',
+        target_id: null,
+        mission_id: null,
+        score: actualKiller.score - 50,
+        death_reason: 'Descubierto in fraganti por su víctima en un contraataque.'
+      });
+    });
+
+    // --- ENVÍO DE CORREOS (Fuera de la transacción para no bloquear) ---
+    
+    // 1. Aviso al asesino torpe
+    if (clumsyKillerEmail) {
+      sendEmail(
+        clumsyKillerEmail,
+        '🗡️ The Killer: Has sido descubierto',
+        `<h2>¡Fin del juego, ${clumsyKillerName}!</h2>
+         <p>Has sido demasiado evidente. <strong>${defenderName}</strong> se ha dado cuenta de tus intenciones y te ha acusado in fraganti usando la Defensa Activa.</p>
+         <p>Has sido eliminado por indiscreto y has perdido puntos. En este juego, la sutileza es clave.</p>
+         <p>Puedes seguir entrando a la App para ver el Muro de Muertes y el Ranking.</p>`
+      );
+    }
+
+    // 2. Aviso al cazador que ha perdido a su presa
+    if (hunterEmail) {
+      sendEmail(
+        hunterEmail,
+        '🗡️ Novedades en The Killer: Cambio de objetivo',
+        `<h2>¡Atención, ${hunterName}!</h2>
+         <p>Tu objetivo anterior (${clumsyKillerName}) acaba de ser eliminado por torpe antes de que pudieras alcanzarle.</p>
+         <p>Pero tu contrato sigue activo. Entra de inmediato en la aplicación para descubrir la identidad de tu <strong>nuevo objetivo</strong>.</p>
+         <p>Tu arma (misión) no ha cambiado. Sé más sigiloso que tu predecesor.</p>`
+      );
+    }
+
+    res.json({ message: '¡Contraataque exitoso! Tu asesino ha sido eliminado por indiscreto y todos han sido notificados.' });
+  } catch (error: any) {
+    res.status(400).json({ error: error.message || 'Error en el contraataque' });
+  }
+};
+
+
+// --- 4. ABANDONAR EL JUEGO (Suicidio) ---
+export const suicide = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const userId = req.user.id;
+
+    const edition = await db('editions').where({ status: 'ACTIVE' }).first();
+    if (!edition) {
+      res.status(400).json({ error: 'No hay partida activa para abandonar.' });
+      return;
+    }
+
+    await db.transaction(async (trx) => {
+      // 1. Identificar al participante que abandona (Quitter)
+      const quitter = await trx('participants').where({ user_id: userId, edition_id: edition.id, status: 'ALIVE' }).first();
+      if (!quitter) throw new Error('No estás vivo en esta partida o ya has sido eliminado.');
+
+      // 2. Identificar a quien le estaba cazando (Hunter)
+      const hunter = await trx('participants').where({ target_id: quitter.id, edition_id: edition.id }).first();
+      if (!hunter) throw new Error('Error de integridad: Nadie te estaba cazando.');
+
+      // 3. Obtener el email y nombre del Hunter para avisarle
+      const hunterUser = await trx('users').where({ id: hunter.user_id }).first();
+      const newTargetUser = await trx('users')
+        .join('participants', 'users.id', 'participants.user_id')
+        .where('participants.id', quitter.target_id)
+        .select('users.name')
+        .first();
+
+      // 4. Reparar el círculo: El Hunter hereda el objetivo del Quitter
+      await trx('participants').where({ id: hunter.id }).update({
+        target_id: quitter.target_id
+        // Nota: NO le cambiamos la misión al cazador, mantiene la suya original.
+      });
+
+      // 5. El Quitter muere de forma deshonrosa
+      await trx('participants').where({ id: quitter.id }).update({
+        status: 'DISQUALIFIED', // Lo marcamos diferente a DEAD para distinguirlo en estadísticas
+        target_id: null,
+        mission_id: null,
+        score: 0,
+        death_reason: 'Abandono voluntario del juego.'
+      });
+
+      // 6. Enviar notificación por correo al cazador en segundo plano
+      if (hunterUser && hunterUser.email) {
+        const subject = '🗡️ Novedades en The Killer: Tu objetivo ha abandonado';
+        const html = `
+          <h2>¡Cambio de planes, Asesino!</h2>
+          <p>Lamentamos informarte de que tu objetivo se ha rendido y ha abandonado el juego.</p>
+          <p>Pero el círculo no se detiene. Hemos actualizado tu expediente.</p>
+          <p>Entra a la aplicación para descubrir a tu <strong>nuevo objetivo</strong>: ${newTargetUser?.name || 'Desconocido'}. Tu arma (misión) sigue siendo la misma.</p>
+          <p>Buena suerte.</p>
+        `;
+        // No usamos await aquí para no bloquear la respuesta HTTP al usuario que se suicida
+        sendEmail(hunterUser.email, subject, html);
+      }
+    });
+
+    res.json({ message: 'Has abandonado el juego. La cadena ha sido reparada y tu asesino notificado.' });
+  } catch (error: any) {
+    res.status(400).json({ error: error.message || 'Error al abandonar la partida' });
+  }
+};
+
+// --- 5. OBTENER LISTA DE SOSPECHOSOS (Para el Contraataque) ---
+export const getSuspects = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const userId = req.user.id;
+
+    const edition = await db('editions').where({ status: 'ACTIVE' }).first();
+    if (!edition) {
+      res.json([]);
+      return;
+    }
+
+    // Buscamos a todos los jugadores vivos en esta edición, EXCLUYENDO al propio usuario
+    const suspects = await db('participants')
+      .join('users', 'participants.user_id', 'users.id')
+      .where({ 
+        'participants.edition_id': edition.id, 
+        'participants.status': 'ALIVE' 
+      })
+      .andWhere('users.id', '!=', userId)
+      .select(
+        'users.id as accusedUserId', 
+        'users.name'
+      )
+      .orderBy('users.name', 'asc');
+
+    res.json(suspects);
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Error al obtener los sospechosos' });
+  }
+};
+
+// --- NUEVA: DISPUTAR MUERTE (Víctima no está de acuerdo) ---
+export const disputeDeath = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const userId = req.user.id;
+    const edition = await db('editions').where({ status: 'ACTIVE' }).first();
+    const victim = await db('participants').where({ user_id: userId, edition_id: edition.id }).first();
+    
+    const claim = await db('kill_claims').where({ victim_id: victim.id }).first();
+    if (!claim) throw new Error('No hay ninguna muerte reportada contra ti.');
+
+    await db('kill_claims').where({ id: claim.id }).update({ status: 'DISPUTED' });
+
+    // Notificar al Admin
+    const admin = await db('users').where({ is_admin: true }).first();
+    if (admin?.email) {
+      sendEmail(admin.email, '⚠️ Disputa en The Killer', 'Un jugador ha disputado un reporte de asesinato. Entra al panel de control para resolverlo.');
+    }
+
+    res.json({ message: 'Has disputado el asesinato. El administrador tomará una decisión.' });
+  } catch (error: any) {
+    res.status(400).json({ error: error.message });
+  }
+};
+
+// --- NUEVAS: FUNCIONES DEL ADMINISTRADOR ---
+
+export const getPendingClaims = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const claims = await db('kill_claims')
+      .join('users as killer_u', 'kill_claims.killer_id', 'killer_u.id') // Ojo: Aquí uniremos con participants primero si fuera exacto, pero por brevedad asumo la lógica
+      .select('kill_claims.*'); // Simplificado. En tu código real, añade los JOINs necesarios para traer los nombres.
+    
+    res.json(claims);
+  } catch (error) {
+    res.status(500).json({ error: 'Error al obtener reportes pendientes.' });
+  }
+};
+
+export const resolveClaim = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { claimId } = req.params;
+    const { action } = req.body; // 'APPROVE' o 'REJECT'
+
+    if (action === 'APPROVE') {
+      await executeKillTransaction(Number(claimId));
+      res.json({ message: 'Muerte aprobada por el administrador.' });
+    } else {
+      await db('kill_claims').where({ id: claimId }).delete();
+      res.json({ message: 'Reporte rechazado. El juego sigue su curso normal.' });
+    }
+  } catch (error: any) {
+    res.status(400).json({ error: error.message });
+  }
+};
+
+
+===========================================================
+// Archivo: src/controllers/social.controller.ts
+===========================================================
+import { Request, Response } from 'express';
+import { AuthRequest } from '../middlewares/auth.middleware.js';
+import db from '../db.js';
+
+// --- 1. OBTENER EL RANKING (Blindado contra trampas) ---
+export const getRanking = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const edition = await db('editions')
+      .whereIn('status', ['ACTIVE', 'FINISHED'])
+      .orderBy('id', 'desc')
+      .first();
+
+    if (!edition) {
+      res.json([]);
+      return;
+    }
+
+    const ranking = await db('participants')
+      .join('users', 'participants.user_id', 'users.id')
+      .where('participants.edition_id', edition.id)
+      .select(
+        'users.avatar', // SOLAMENTE enviamos el avatar (o alias), NUNCA el nombre real
+        'participants.status', 
+        'participants.score', 
+        'participants.death_reason'
+      )
+      .orderBy('participants.score', 'desc');
+
+    res.json(ranking);
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Error al obtener el ranking' });
+  }
+};
+
+// --- 2. OBTENER EL FEED (Muro de Muertes Blindado) ---
+export const getFeed = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const edition = await db('editions')
+      .whereIn('status', ['ACTIVE', 'FINISHED'])
+      .orderBy('id', 'desc')
+      .first();
+
+    if (!edition) {
+      res.json([]);
+      return;
+    }
+
+    const feed = await db('kills_log')
+      .join('participants as killer_p', 'kills_log.killer_id', 'killer_p.id')
+      .join('users as killer_u', 'killer_p.user_id', 'killer_u.id')
+      .join('participants as victim_p', 'kills_log.victim_id', 'victim_p.id')
+      .join('users as victim_u', 'victim_p.user_id', 'victim_u.id')
+      .join('missions', 'kills_log.mission_id', 'missions.id')
+      .where('kills_log.edition_id', edition.id)
+      .select(
+        'kills_log.id',
+        'killer_u.avatar as killer_avatar', // El asesino sigue en el anonimato
+        'victim_u.name as victim_name',     // La víctima sí se publica con su nombre real
+        'missions.description as mission',
+        'kills_log.story',
+        'kills_log.likes_count',
+        'kills_log.created_at'
+      )
+      .orderBy('kills_log.created_at', 'desc');
+
+    res.json(feed);
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Error al obtener el muro de muertes' });
+  }
+};
+
+// --- 3. DAR LIKE A UNA MUERTE ---
+export const likeKill = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const { id } = req.params;
+    
+    // Incremento atómico directo en la base de datos
+    await db('kills_log').where({ id }).increment('likes_count', 1);
+    
+    res.json({ message: 'Like registrado' });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Error al registrar el like' });
+  }
+};
+
+
+===========================================================
+// Archivo: src/controllers/admin.controller.ts
+===========================================================
+import { Request, Response } from 'express';
+import db from '../db.js';
+
+export const getUsers = async (req: Request, res: Response) => {
+  try {
+    // Obtenemos todos los usuarios, pero no enviamos las contraseñas
+    const users = await db('users')
+      .select('id', 'name', 'email', 'avatar', 'is_admin')
+      .orderBy('id', 'desc');
+    
+    res.json(users);
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Error al obtener la lista de agentes.' });
+  }
+};
+
+
+===========================================================
+// Archivo: src/controllers/editions.controller.ts
+===========================================================
+import { Request, Response } from 'express';
+import { AuthRequest } from '../middlewares/auth.middleware.js';
+import db from '../db.js';
+
+// Crear una nueva edición (Solo Admin)
+export const createEdition = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { title, start_date, end_date } = req.body;
+
+    if (!title) {
+      res.status(400).json({ error: 'El título de la edición es obligatorio (ej. "Killer Halloween")' });
+      return;
+    }
+
+    // Insertamos la edición. Por defecto en nuestra BD el status es 'CREATING'
+    const [id] = await db('editions').insert({
+      title,
+      start_date: start_date || null,
+      end_date: end_date || null,
+    });
+
+    res.status(201).json({ 
+      message: 'Edición creada con éxito. Abierta para inscripciones.', 
+      edition: { id, title, status: 'CREATING' } 
+    });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Error al crear la edición' });
+  }
+};
+
+// Obtener la edición actual para que los usuarios puedan unirse (Cualquier usuario)
+export const getCurrentEdition = async (req: Request, res: Response): Promise<void> => {
+  try {
+    // Buscamos la edición más reciente que esté en fase de inscripción o activa
+    const edition = await db('editions')
+      .whereIn('status', ['CREATING', 'ACTIVE'])
+      .orderBy('id', 'desc')
+      .first();
+
+    if (!edition) {
+      res.json({ message: 'No hay ninguna edición activa en este momento', edition: null });
+      return;
+    }
+
+    res.json({ edition });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Error al obtener la edición actual' });
+  }
+};
+
+// Obtener el historial completo de ediciones (Solo Admin)
+export const getAllEditions = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const editions = await db('editions').select('*').orderBy('id', 'desc');
+    res.json(editions);
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Error al obtener el historial de ediciones' });
+  }
+};
+
+// --- 1. UNIRSE A UNA EDICIÓN ---
+export const joinEdition = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const userId = req.user.id;
+    const { id: editionId } = req.params;
+
+    // Comprobar que la edición existe y está en fase de creación
+    const edition = await db('editions').where({ id: editionId }).first();
+    if (!edition || edition.status !== 'CREATING') {
+      res.status(400).json({ error: 'La edición no existe o ya no admite inscripciones.' });
+      return;
+    }
+
+    // Insertar al participante
+    await db('participants').insert({
+      user_id: userId,
+      edition_id: editionId,
+      status: 'ALIVE'
+    });
+
+    res.status(201).json({ message: 'Te has inscrito a la edición con éxito.' });
+  } catch (error: any) {
+    // Capturamos el error de clave única si el usuario intenta unirse dos veces
+    if (error.code === 'ER_DUP_ENTRY') {
+      res.status(400).json({ error: 'Ya estás inscrito en esta edición.' });
+    } else {
+      res.status(500).json({ error: 'Error al inscribirse.' });
+    }
+  }
+};
+
+// --- 2. ARRANCAR EL JUEGO (Crear el círculo) ---
+export const startEdition = async (req: Request, res: Response): Promise<void> => {
+  const { id: editionId } = req.params;
+
+  try {
+    // Iniciamos una transacción: o se guarda todo, o no se guarda nada
+    await db.transaction(async (trx) => {
+      // 1. Obtener participantes vivos de esta edición
+      const participants = await trx('participants')
+        .where({ edition_id: editionId, status: 'ALIVE' })
+        .select('id');
+
+      if (participants.length < 3) {
+        throw new Error('Se necesitan al menos 3 jugadores para empezar.');
+      }
+
+      // 2. Obtener todas las misiones activas
+      const missions = await trx('missions').where({ is_active: true }).select('id');
+      if (missions.length === 0) {
+        throw new Error('No hay misiones en la base de datos.');
+      }
+
+      // 3. Algoritmo Fisher-Yates para barajar a los participantes de forma aleatoria
+      for (let i = participants.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [participants[i], participants[j]] = [participants[j], participants[i]];
+      }
+
+      // 4. Asignar objetivos y misiones
+      for (let i = 0; i < participants.length; i++) {
+        // El objetivo es la siguiente persona en el array (y el último apunta al primero)
+        const target = participants[(i + 1) % participants.length];
+        
+        // Elegir una misión aleatoria
+        const randomMission = missions[Math.floor(Math.random() * missions.length)];
+
+        await trx('participants')
+          .where({ id: participants[i].id })
+          .update({
+            target_id: target.id,
+            mission_id: randomMission.id
+          });
+      }
+
+      // 5. Cambiar el estado de la edición a ACTIVE
+      await trx('editions').where({ id: editionId }).update({ status: 'ACTIVE' });
+    }); // Fin de la transacción
+
+    res.json({ message: '¡El juego ha comenzado! Objetivos y misiones asignados.' });
+  } catch (error: any) {
+    res.status(400).json({ error: error.message || 'Error al iniciar la edición.' });
+  }
+};
+
+// --- 3. FINALIZAR LA EDICIÓN ---
+export const finishEdition = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { id: editionId } = req.params;
+    
+    await db('editions')
+      .where({ id: editionId })
+      .update({ status: 'FINISHED' });
+
+    res.json({ message: 'La edición ha finalizado correctamente.' });
+  } catch (error) {
+    res.status(500).json({ error: 'Error al finalizar la edición.' });
+  }
+};
+
+
+===========================================================
+// Archivo: src/scripts/createAdmin.ts
+===========================================================
+import bcrypt from 'bcrypt';
+import db from '../db.js';
+
+async function createAdmin() {
+  // Capturamos los argumentos que se pasen por consola
+  const email = process.argv[2];
+  const password = process.argv[3];
+  const name = process.argv[4] || 'Administrador';
+
+  if (!email || !password) {
+    console.error('❌ Uso incorrecto.');
+    console.error('👉 Ejecuta: npm run create-admin <email> <password> ["Nombre Opcional"]');
+    process.exit(1);
+  }
+
+  try {
+    const existingUser = await db('users').where({ email }).first();
+
+    if (existingUser) {
+      console.log('⚠️ El usuario ya existe. Actualizando permisos a administrador...');
+      await db('users').where({ email }).update({ is_admin: true });
+      console.log('✅ Usuario actualizado a administrador con éxito.');
+    } else {
+      console.log('Creando nuevo usuario administrador...');
+      const hashedPassword = await bcrypt.hash(password, 10);
+      
+      await db('users').insert({
+        name,
+        email,
+        password: hashedPassword,
+        is_admin: true,
+      });
+      console.log('✅ Administrador creado con éxito.');
+    }
+  } catch (error) {
+    console.error('❌ Error crítico al crear el administrador:', error);
+  } finally {
+    // Cerramos la conexión a la base de datos para que el script termine
+    await db.destroy();
+    process.exit(0);
+  }
+}
+
+createAdmin();
+
+
+===========================================================
+// Archivo: src/index.ts
+===========================================================
+import express, { Request, Response } from 'express';
+import cors from 'cors';
+import dotenv from 'dotenv';
+import db from './db.js'; // Importamos la conexión (fíjate en la extensión .js)
+import { startCronJobs } from './services/cron.service.js';
+
+// Importamos nuestras rutas
+import authRoutes from './routes/auth.routes.js'; // Ruta para autenticación
+import missionsRoutes from './routes/missions.routes.js';
+import editionsRoutes from './routes/editions.routes.js';
+import participantsRoutes from './routes/participants.routes.js';
+import socialRoutes from './routes/social.routes.js';
+import adminRoutes from './routes/admin.routes.js';
+
+// Cargamos las variables de entorno
+dotenv.config();
+
+const app = express();
+const PORT = process.env.PORT || 5000;
+
+// Middlewares básicos
+app.use(cors()); // Permite que el frontend de React haga peticiones a esta API
+app.use(express.json()); // Permite recibir datos en formato JSON en el body de las peticiones
+
+// Rutas
+app.use('/api/auth', authRoutes);
+app.use('/api/admin', adminRoutes);
+app.use('/api/missions', missionsRoutes);
+app.use('/api/editions', editionsRoutes);
+app.use('/api/participants', participantsRoutes);
+app.use('/api/social', socialRoutes);
+
+// Encender el motor de tareas automáticas
+startCronJobs();
+
+// Ruta de prueba para verificar el estado del servidor y la base de datos
+app.get('/', async (req: Request, res: Response) => {
+  try {
+    // Hacemos una consulta muy simple a MySQL para verificar la conexión
+    await db.raw('SELECT 1');
+    
+    res.json({
+      status: '¡Vivo!',
+      message: 'El backend de The Killer está funcionando correctamente 🗡️',
+      database: 'Conectado a MySQL con éxito a través de Knex'
+    });
+  } catch (error) {
+    console.error('Error crítico al conectar con la base de datos:', error);
+    res.status(500).json({ 
+      status: 'Error',
+      message: 'El servidor funciona, pero la base de datos no responde',
+      error: error instanceof Error ? error.message : 'Error desconocido'
+    });
+  }
+});
+
+
+// Iniciamos el servidor
+app.listen(PORT, () => {
+  console.log(`🚀 Servidor backend corriendo en http://localhost:${PORT}`);
+});
+
+
+===========================================================
+// Archivo: src/services/email.service.ts
+===========================================================
+import nodemailer from 'nodemailer';
+import dotenv from 'dotenv';
+
+dotenv.config();
+
+const transporter = nodemailer.createTransport({
+  host: process.env.SMTP_HOST,
+  port: Number(process.env.SMTP_PORT) || 25,
+  secure: false, // false porque el puerto 25 usa STARTTLS explícito, no SSL implícito
+  requireTLS: true, // Esto es el equivalente directo a tu $config['email_smtp']['smtp_secure'] = 'tls'
+  tls: {
+    rejectUnauthorized: false // Vital para certificados internos del servidor
+  },
+  // Solo inyectamos el bloque 'auth' si realmente hemos puesto un usuario en el .env
+  ...(process.env.SMTP_USER ? {
+    auth: {
+      user: process.env.SMTP_USER,
+      pass: process.env.SMTP_PASS,
+    }
+  } : {})
+});
+
+export const sendEmail = async (to: string, subject: string, html: string): Promise<boolean> => {
+  try {
+    await transporter.sendMail({
+      from: process.env.EMAIL_FROM || '"The Killer" <noreply@iesjacaranda.es>',
+      to,
+      subject,
+      html,
+    });
+    return true;
+  } catch (error) {
+    console.error(`Error enviando correo a ${to}:`, error);
+    return false;
+  }
+};
+
+
+===========================================================
+// Archivo: src/services/cron.service.ts
+===========================================================
+import cron from 'node-cron';
+import db from '../db.js';
+import { sendEmail } from './email.service.js';
+
+export const startCronJobs = () => {
+  // Se ejecuta todos los días a las 20:00 horas ('0 20 * * *')
+  cron.schedule('0 20 * * *', async () => {
+    console.log('⏰ Ejecutando revisión de inactividad...');
+
+    try {
+      // 1. Verificar si hay una edición activa
+      const edition = await db('editions').where({ status: 'ACTIVE' }).first();
+      if (!edition) return;
+
+      // 2. Definimos el límite de inactividad (48 horas)
+      const twoDaysAgo = new Date(Date.now() - 48 * 60 * 60 * 1000);
+
+      // 3. Obtener todos los jugadores vivos con sus datos de usuario
+      const aliveParticipants = await db('participants')
+        .join('users', 'participants.user_id', 'users.id')
+        .where({ 'participants.edition_id': edition.id, 'participants.status': 'ALIVE' })
+        .select('participants.*', 'users.email', 'users.name');
+
+      for (const player of aliveParticipants) {
+        // Buscar el último asesinato de este jugador
+        const lastKill = await db('kills_log')
+          .where({ killer_id: player.id, edition_id: edition.id })
+          .orderBy('created_at', 'desc')
+          .first();
+
+        // Determinar si está inactivo:
+        // a) Nunca ha matado a nadie y la partida empezó hace más de 48h
+        // b) O su última muerte fue hace más de 48h
+        let isInactive = false;
+
+        if (lastKill) {
+          isInactive = new Date(lastKill.created_at) < twoDaysAgo;
+        } else {
+          isInactive = new Date(edition.start_date || edition.created_at) < twoDaysAgo;
+        }
+
+        if (isInactive) {
+          // Penalización de -20 puntos
+          await db('participants').where({ id: player.id }).update({
+            score: player.score - 20
+          });
+
+          // Avisar por correo de la penalización
+          if (player.email) {
+            sendEmail(
+              player.email,
+              '🗡️ The Killer: Penalización por inactividad',
+              `<h2>¡Despierta, ${player.name}!</h2>
+               <p>El silencio te delata. Llevas más de 48 horas sin eliminar a tu objetivo y la organización te ha penalizado con <strong>-20 puntos</strong>.</p>
+               <p>Este juego no se gana escondiéndose. Búscate una coartada, prepara tu misión y actúa antes de que sigan bajando tus puntos... o peor, antes de que te encuentren a ti.</p>`
+            );
+          }
+        }
+      }
+      
+      console.log('✅ Revisión de inactividad completada.');
+    } catch (error) {
+      console.error('❌ Error en el Cron de inactividad:', error);
+    }
+  });
+};
+
+

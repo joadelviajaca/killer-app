@@ -55,6 +55,7 @@ export const getFeed = async (req: Request, res: Response): Promise<void> => {
       .where('kills_log.edition_id', edition.id)
       .select(
         'kills_log.id',
+        'killer_u.id as killer_user_id',
         'killer_u.avatar as killer_avatar', // El asesino sigue en el anonimato
         'victim_u.name as victim_name',     // La víctima sí se publica con su nombre real
         'missions.description as mission',
