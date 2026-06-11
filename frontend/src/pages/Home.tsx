@@ -303,9 +303,11 @@ export default function Home() {
                 <div className="bg-gradient-to-br from-red-900 to-gray-900 p-1 rounded-xl shadow-2xl shadow-red-900/20 mb-6">
                   <div className="bg-gray-900 p-6 md:p-8 rounded-lg text-center">
                     <h3 className="text-red-500 font-bold tracking-widest uppercase text-sm mb-2">Tu Objetivo Actual</h3>
-                    <div className="w-32 h-32 mx-auto bg-gray-800 rounded-full border-4 border-red-900 mb-4 overflow-hidden flex items-center justify-center text-5xl">
-                      {data.targetAvatar || '👤'}
+                    {/* NUEVO DISEÑO GENÉRICO DEL OBJETIVO (Oculta el alias) */}
+                    <div className="w-32 h-32 mx-auto bg-gray-800 rounded-full border-4 border-red-900 mb-4 overflow-hidden flex items-center justify-center text-6xl shadow-[0_0_15px_rgba(220,38,38,0.4)]">
+                      🎯
                     </div>
+                    
                     <h2 className="text-3xl font-extrabold text-white mb-6">{data.target || 'Desconocido'}</h2>
                     <div className="bg-gray-800 p-4 rounded-lg text-left border border-gray-700 relative overflow-hidden">
                       <div className="absolute top-0 left-0 w-1 h-full bg-red-500"></div>
