@@ -1,6 +1,7 @@
 import { Request, Response } from 'express';
 import { AuthRequest } from '../middlewares/auth.middleware.js';
 import db from '../db.js';
+import { sendEmail } from '../services/email.service.js';
 
 // Crear una nueva edición (Solo Admin)
 export const createEdition = async (req: Request, res: Response): Promise<void> => {
@@ -140,6 +141,58 @@ export const startEdition = async (req: Request, res: Response): Promise<void> =
       await trx('editions').where({ id: editionId }).update({ status: 'ACTIVE' });
     }); // Fin de la transacción
 
+    try {
+      // 1. Obtenemos a todos los participantes con sus datos, misiones y el nombre de su objetivo
+      const playersToNotify = await db('participants')
+        .join('users', 'participants.user_id', 'users.id')
+        // Unimos de nuevo con participants para sacar el usuario que es el objetivo
+        .join('participants as p_target', 'participants.target_id', 'p_target.id')
+        .join('users as target_user', 'p_target.user_id', 'target_user.id')
+        .join('missions', 'participants.mission_id', 'missions.id')
+        .where('participants.edition_id', id)
+        .select(
+          'users.email',
+          'users.name as killer_name',
+          'target_user.name as target_name',
+          'missions.description as mission'
+        );
+
+      // 2. Preparamos y enviamos todos los correos en paralelo
+      const emailPromises = playersToNotify.map(player => {
+        const subject = '🎯 THE KILLER: Tienes un nuevo contrato';
+        const html = `
+          <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; background-color: #111827; color: #f3f4f6; padding: 20px; border-radius: 10px;">
+            <h2 style="color: #ef4444; border-bottom: 1px solid #374151; padding-bottom: 10px;">EL JUEGO HA COMENZADO</h2>
+            <p>Agente <strong>${player.killer_name}</strong>, la central te ha asignado un objetivo. Tu contrato es oficial.</p>
+            
+            <div style="background-color: #7f1d1d; color: white; padding: 15px; border-radius: 5px; margin: 25px 0; border: 1px solid #ef4444;">
+              <h3 style="margin-top: 0; color: #fca5a5; font-size: 14px; text-transform: uppercase; letter-spacing: 1px;">Tu objetivo clasificado:</h3>
+              <p style="font-size: 24px; font-weight: bold; margin: 10px 0;">🎯 ${player.target_name}</p>
+              
+              <h3 style="margin-top: 20px; color: #fca5a5; font-size: 14px; text-transform: uppercase; letter-spacing: 1px;">Arma / Método autorizado:</h3>
+              <p style="font-size: 18px; font-style: italic; margin-bottom: 0;">"${player.mission}"</p>
+            </div>
+            
+            <p style="color: #9ca3af; font-size: 14px;"><strong>Recuerda:</strong> Discreción absoluta. Si tu objetivo descubre tu identidad y te acusa usando la Defensa Activa, serás eliminado inmediatamente.</p>
+            <p style="color: #9ca3af; font-size: 14px;">Entra en la <a href="https://killer.intranetjacaranda.es" style="color: #60a5fa;">Intranet de The Killer</a> para acceder a tu panel de control, reportar tu asesinato o ver el Muro Social.</p>
+            
+            <p style="margin-top: 30px; font-weight: bold; color: #ef4444;">Buena caza.</p>
+          </div>
+        `;
+        
+        return sendEmail(player.email, subject, html);
+      });
+
+      // Usamos allSettled para que si falla un correo (ej. email falso) no bloquee el resto
+      await Promise.allSettled(emailPromises);
+      console.log(`Se enviaron los correos de inicio a ${playersToNotify.length} agentes.`);
+
+    } catch (emailError) {
+      // Atrapamos el error silenciosamente. 
+      // El juego ya se ha creado bien en la BD, no queremos devolver un error 500 por culpa del correo.
+      console.error('Error al enviar los correos masivos de inicio de partida:', emailError);
+    }
+    
     res.json({ message: '¡El juego ha comenzado! Objetivos y misiones asignados.' });
   } catch (error: any) {
     res.status(400).json({ error: error.message || 'Error al iniciar la edición.' });
